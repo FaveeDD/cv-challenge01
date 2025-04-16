@@ -1,0 +1,60 @@
+version: '3.8'
+
+networks:
+  app-network:
+    external: true
+  monitoring-network:
+    external: true
+
+# This is a wrapper docker-compose file that imports the app and monitoring stacks
+# It allows you to run both stacks with a single command:
+# docker-compose up -d
+# But it's recommended to follow the deployment script for proper initialization
+
+services:
+  # Application Stack
+  backend:
+    extends:
+      file: docker-compose.app.yml
+      service: backend
+  
+  frontend:
+    extends:
+      file: docker-compose.app.yml
+      service: frontend
+  
+  adminer:
+    extends:
+      file: docker-compose.app.yml
+      service: adminer
+  
+  traefik:
+    extends:
+      file: docker-compose.app.yml
+      service: traefik
+  
+  # Monitoring Stack
+  prometheus:
+    extends:
+      file: docker-compose.monitoring.yml
+      service: prometheus
+  
+  grafana:
+    extends:
+      file: docker-compose.monitoring.yml
+      service: grafana
+  
+  loki:
+    extends:
+      file: docker-compose.monitoring.yml
+      service: loki
+  
+  promtail:
+    extends:
+      file: docker-compose.monitoring.yml
+      service: promtail
+  
+  cadvisor:
+    extends:
+      file: docker-compose.monitoring.yml
+      service: cadvisor

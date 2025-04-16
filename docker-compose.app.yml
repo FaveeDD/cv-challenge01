@@ -1,0 +1,122 @@
+version: '3.8'
+
+networks:
+  app-network:
+    driver: bridge
+  monitoring-network:
+    external: true
+
+services:
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fastapi-backend
+    restart: always
+    environment:
+      - POSTGRES_SERVER=${POSTGRES_SERVER}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - SECRET_KEY=${SECRET_KEY}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - PROJECT_NAME=${PROJECT_NAME}
+      - STACK_NAME=${STACK_NAME}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD}
+      - USERS_OPEN_REGISTRATION=${USERS_OPEN_REGISTRATION}
+      - ENVIRONMENT=${ENVIRONMENT}
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+      - monitoring-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.backend-api.service=backend-service"
+      - "traefik.http.services.backend-service.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.backend-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.backend-api.middlewares=backend-strip@docker"
+      - "traefik.http.routers.backend-docs.rule=PathPrefix(`/docs`)"
+      - "traefik.http.routers.backend-docs.service=backend-service"
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: react-frontend
+    restart: always
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      - "traefik.http.routers.frontend.priority=1"
+
+  # Adminer for Database Management - still useful for RDS
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    restart: always
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=Host(`db.${DOMAIN}`)"
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+
+  # Traefik as Reverse Proxy
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/config:/etc/traefik
+      - ./traefik/certificates:/certificates
+    networks:
+      - app-network
+      - monitoring-network
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/certificates/acme.json"
+    labels:
+      # Dashboard
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_BASIC_AUTH}"
+      # Prometheus
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.service=prometheus-service"
+      - "traefik.http.services.prometheus-service.loadbalancer.server.port=9090"
+      # Grafana
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.service=grafana-service"
+      - "traefik.http.services.grafana-service.loadbalancer.server.port=3000"
+      # Redirects for www to non-www
+      - "traefik.http.routers.www-redirect.rule=HostRegexp(`{subdomain:www}.{domain:.+}`)"
+      - "traefik.http.routers.www-redirect.priority=100"
+      - "traefik.http.routers.www-redirect.middlewares=www-redirect"
+      - "traefik.http.middlewares.www-redirect.redirectregex.regex=^https?://www\\.(.+)"
+      - "traefik.http.middlewares.www-redirect.redirectregex.replacement=https://$${1}"
